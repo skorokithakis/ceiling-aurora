@@ -1,0 +1,4 @@
+#!/bin/sh
+# Serve the static site for QA. Run from the repo root so index.html is at /.
+cd "$(dirname "$0")/.."
+exec python3 -m http.server 8000
