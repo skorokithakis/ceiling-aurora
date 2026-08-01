@@ -5137,13 +5137,42 @@
         const latitude = LAT * radians;
         const sinLatitude = Math.sin(latitude);
         const cosLatitude = Math.cos(latitude);
-        const starCatalog = STARS.map(([rightAscension, declination, magnitude], index) => ({
-          rightAscension: rightAscension * 15 * radians,
-          sinDeclination: Math.sin(declination * radians),
-          cosDeclination: Math.cos(declination * radians),
-          magnitude,
-          twinklePhase: index * 2.399,
-        }));
+        // Star twinkle: each star mixes three sines at its own rates, one from
+        // each band (0.10-0.30, 0.40-0.80 and 1.00-1.50 Hz), with phases and
+        // rates drawn from the seeded LCG below, so every star flickers with
+        // its own rhythm and no organised wave can sweep the sky. The factor
+        // is 1 + amplitude * S / sqrt(3/2), where S is the star's summed
+        // sines: dividing by the RMS of three unit sines (sqrt(3/2) ~ 1.225)
+        // makes the sum unit-RMS, so the altitude-scaled amplitude is the RMS
+        // swing about a mean of exactly 1. The modulation is linear and
+        // symmetric, so the mean brightness is unchanged (no vignette toward
+        // the horizon) and no frequency doubling occurs.
+        // Seeded LCG: the sky looks the same on every load (Math.random()
+        // would reshuffle it).
+        let twinkleSeed = 0x9e3779b9;
+        const twinkleRandom = () =>
+          (twinkleSeed = (1664525 * twinkleSeed + 1013904223) >>> 0) / 4294967296;
+        const twinkleNormalise = 1 / Math.sqrt(1.5);
+
+        const starCatalog = STARS.map(([rightAscension, declination, magnitude]) => {
+          // One rate from each band, then one independent phase per component.
+          const slowRate = 0.1 + 0.2 * twinkleRandom();
+          const mediumRate = 0.4 + 0.4 * twinkleRandom();
+          const fastRate = 1.0 + 0.5 * twinkleRandom();
+          const twoPi = 2 * Math.PI;
+          return {
+            rightAscension: rightAscension * 15 * radians,
+            sinDeclination: Math.sin(declination * radians),
+            cosDeclination: Math.cos(declination * radians),
+            magnitude,
+            twinkleRate1: slowRate * twoPi,
+            twinkleRate2: mediumRate * twoPi,
+            twinkleRate3: fastRate * twoPi,
+            twinklePhase1: twinkleRandom() * twoPi,
+            twinklePhase2: twinkleRandom() * twoPi,
+            twinklePhase3: twinkleRandom() * twoPi,
+          };
+        });
 
         function localSiderealTime(date) {
           const julianDate = date.getTime() / 86400000 + 2440587.5;
@@ -5189,9 +5218,21 @@
               // register, and without the brightness floor they vanish. The
               // bright end of both mappings is unchanged.
               const brightness = Math.max(0.15, 1 - (star.magnitude + 1.5) / 8);
-              const twinkle = 0.96 + 0.04 * Math.sin(frame.time * 1.7 + star.twinklePhase);
+              // The twinkle swings harder the lower the star sits: the
+              // amplitude grows linearly as sinAltitude falls, mirroring
+              // airmass, the longer atmospheric path low stars are seen
+              // through (about +/-18% RMS near the horizon vs +/-4% at the
+              // zenith).
+              const twinkleAmplitude = 0.18 - 0.14 * sinAltitude;
+              const twinkleSum =
+                Math.sin(frame.time * star.twinkleRate1 + star.twinklePhase1) +
+                Math.sin(frame.time * star.twinkleRate2 + star.twinklePhase2) +
+                Math.sin(frame.time * star.twinkleRate3 + star.twinklePhase3);
+              const twinkle = 1 + twinkleAmplitude * twinkleNormalise * twinkleSum;
 
-              context.globalAlpha = brightness * twinkle;
+              // Only the few brightest stars ever push alpha past 1, and only
+              // at twinkle peaks: a range guard, not a shaping curve.
+              context.globalAlpha = Math.min(1, brightness * twinkle);
               context.fillStyle = "#fff";
               context.beginPath();
               context.arc(x, y, Math.max(0.48, 0.45 + (5.2 - star.magnitude) * 0.27), 0, 2 * Math.PI);
