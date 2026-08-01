@@ -1829,24 +1829,19 @@
         }
 
         function createMeteor(frame) {
-          const length = Math.min(frame.width, frame.height) * (0.16 + Math.random() * 0.16);
+          const shortSide = Math.min(frame.width, frame.height);
           const angle = Math.random() * Math.PI * 2;
-          const deltaX = Math.cos(angle) * length;
-          const deltaY = Math.sin(angle) * length;
-          // Limit the start range so both ends always remain on-screen.
-          const startX = Math.max(0, -deltaX) + Math.random() * (frame.width - Math.abs(deltaX));
-          const startY = Math.max(0, -deltaY) + Math.random() * (frame.height - Math.abs(deltaY));
-          const endX = startX + deltaX;
-          const endY = startY + deltaY;
+          const speed = shortSide * (0.55 + Math.random() * 0.15);
 
           meteors.push({
-            startX,
-            startY,
-            endX,
-            endY,
+            startX: Math.random() * frame.width,
+            startY: Math.random() * frame.height,
+            directionX: Math.cos(angle),
+            directionY: Math.sin(angle),
+            speed,
+            trailLength: shortSide * (0.15 + Math.random() * 0.1),
             startedAt: frame.time,
-            duration: 0.32 + Math.random() * 0.18,
-            tailDuration: 0.9 + Math.random() * 0.2,
+            duration: 0.7 + Math.random() * 0.4,
           });
         }
 
@@ -1859,7 +1854,7 @@
 
             for (let index = meteors.length - 1; index >= 0; index -= 1) {
               const meteor = meteors[index];
-              if (frame.time - meteor.startedAt > meteor.duration + meteor.tailDuration) {
+              if (frame.time - meteor.startedAt > meteor.duration) {
                 meteors.splice(index, 1);
               }
             }
@@ -1868,33 +1863,36 @@
             for (const meteor of meteors) {
               const elapsed = frame.time - meteor.startedAt;
               const progress = Math.min(1, elapsed / meteor.duration);
-              const tailFade = elapsed > meteor.duration
-                ? 1 - (elapsed - meteor.duration) / meteor.tailDuration
-                : 1;
-              const headX = meteor.startX + (meteor.endX - meteor.startX) * progress;
-              const headY = meteor.startY + (meteor.endY - meteor.startY) * progress;
-              const gradient = context.createLinearGradient(meteor.startX, meteor.startY, headX, headY);
-              gradient.addColorStop(0, "rgba(180, 215, 255, 0)");
-              gradient.addColorStop(0.75, `rgba(210, 230, 255, ${0.35 * tailFade})`);
-              gradient.addColorStop(1, `rgba(255, 255, 255, ${tailFade})`);
+              const brightness = progress < 0.15
+                ? progress / 0.15
+                : 1 - (progress - 0.15) / 0.85;
+              const headX = meteor.startX + meteor.directionX * meteor.speed * elapsed;
+              const headY = meteor.startY + meteor.directionY * meteor.speed * elapsed;
+              const tailBack = Math.min(meteor.trailLength, meteor.speed * elapsed);
+              const tailX = headX - meteor.directionX * tailBack;
+              const tailY = headY - meteor.directionY * tailBack;
 
               context.save();
               context.lineCap = "round";
-              context.strokeStyle = gradient;
-              context.lineWidth = 1.5;
-              context.beginPath();
-              context.moveTo(meteor.startX, meteor.startY);
-              context.lineTo(headX, headY);
-              context.stroke();
-
-              if (progress < 1) {
-                context.fillStyle = `rgba(255, 255, 255, ${tailFade})`;
-                context.shadowColor = "rgba(190, 220, 255, 0.9)";
-                context.shadowBlur = 8;
+              if (tailX !== headX || tailY !== headY) {
+                const gradient = context.createLinearGradient(tailX, tailY, headX, headY);
+                gradient.addColorStop(0, "rgba(180, 215, 255, 0)");
+                gradient.addColorStop(0.75, `rgba(210, 230, 255, ${0.35 * brightness})`);
+                gradient.addColorStop(1, `rgba(255, 255, 255, ${brightness})`);
+                context.strokeStyle = gradient;
+                context.lineWidth = 1.5;
                 context.beginPath();
-                context.arc(headX, headY, 1.5, 0, Math.PI * 2);
-                context.fill();
+                context.moveTo(tailX, tailY);
+                context.lineTo(headX, headY);
+                context.stroke();
               }
+
+              context.fillStyle = `rgba(255, 255, 255, ${brightness})`;
+              context.shadowColor = "rgba(190, 220, 255, 0.9)";
+              context.shadowBlur = 8;
+              context.beginPath();
+              context.arc(headX, headY, 1.5, 0, Math.PI * 2);
+              context.fill();
               context.restore();
             }
           },
