@@ -22,5 +22,5 @@ near the horizon is cropped.
 ## Regenerating star data
 
 `tools/make-stars.py` downloads the HYG catalog and emits `tools/stars.js`
-(stars brighter than magnitude 5). The data is embedded in `index.html`;
-you only need this if you want to change the catalog.
+(stars brighter than magnitude 6, the naked-eye limit). The data is embedded
+in `index.html`; you only need this if you want to change the catalog.

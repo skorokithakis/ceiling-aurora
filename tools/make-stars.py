@@ -13,7 +13,7 @@ SOURCE_URL = (
     "https://raw.githubusercontent.com/astronexus/HYG-Database/main/"
     "hyg/CURRENT/hygdata_v41.csv"
 )
-MAGNITUDE_LIMIT = 5.0
+MAGNITUDE_LIMIT = 6.0
 OUTPUT_PATH = Path(__file__).with_name("stars.js")
 
 
