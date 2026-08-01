@@ -5213,11 +5213,14 @@
               const distance = ((Math.PI / 2 - altitude) / (Math.PI / 2)) * horizonRadius;
               const x = centerX - Math.sin(azimuth) * distance;
               const y = centerY - Math.cos(azimuth) * distance;
-              // Faint stars (mag > 4.9) are boosted relative to the raw flux:
-              // without the radius floor they shrink below a pixel and never
-              // register, and without the brightness floor they vanish. The
-              // bright end of both mappings is unchanged.
-              const brightness = Math.max(0.15, 1 - (star.magnitude + 1.5) / 8);
+              // Faint stars are boosted relative to the raw flux: without the
+              // radius floor (mag > 5.1) they shrink below a pixel and never
+              // register. The divisor sets the slope: the brightest stars sit
+              // near 1 whatever it is, so raising it lifts the faint and
+              // middling stars only, which is where a projected sky reads as
+              // too dim. The brightness floor is now a safety net that the
+              // current mag-6 catalogue never reaches (mag 6 maps to 0.21).
+              const brightness = Math.max(0.15, 1 - (star.magnitude + 1.5) / 9.5);
               // The twinkle swings harder the lower the star sits: the
               // amplitude grows linearly as sinAltitude falls, mirroring
               // airmass, the longer atmospheric path low stars are seen
