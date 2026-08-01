@@ -1786,7 +1786,9 @@
 
             for (let ribbon = 0; ribbon < 3; ribbon += 1) {
               const phase = ribbon * 2.1;
-              const hue = 155 + ribbon * 38 + 28 * Math.sin(time / 25 + phase);
+              // Real aurora palette: mostly green (~130) with a pink fringe (~320).
+              const baseHue = [128, 142, 320][ribbon];
+              const hue = baseHue + 12 * Math.sin(time / 25 + phase);
               const centerY = auroraHeight * (0.22 + ribbon * 0.19);
               const amplitude = auroraHeight * (0.07 + ribbon * 0.015);
               const gradient = auroraContext.createLinearGradient(0, 0, auroraWidth, 0);
