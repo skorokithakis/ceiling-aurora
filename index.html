@@ -1786,10 +1786,11 @@
           filamentLineWidth: 1.5,
           bodyBlur: 2.5,
           filamentBlur: 0.7,
+          timeScale: 2,
         };
         const curtains = [
-          { offset: 0.06, span: 0.46, baseStart: 0.80, baseEnd: 0.61, wobble: 0.018, waves: 11, phase: 0.63, direction: 1 },
-          { offset: 0.39, span: 0.39, baseStart: 0.57, baseEnd: 0.76, wobble: 0.013, waves: 8, phase: 4.18, direction: -1 },
+          { offset: 0.02, span: 0.56, baseStart: 0.80, baseEnd: 0.61, wobble: 0.018, waves: 11, phase: 0.63, direction: 1 },
+          { offset: 0.40, span: 0.56, baseStart: 0.57, baseEnd: 0.76, wobble: 0.013, waves: 8, phase: 4.18, direction: -1 },
         ];
         const auroraRays = [];
         layers.push({
@@ -1808,7 +1809,7 @@
           draw(context, frame) {
             const auroraWidth = auroraCanvas.width;
             const auroraHeight = auroraCanvas.height;
-            const time = frame.time;
+            const time = frame.time * auroraTuning.timeScale;
             auroraContext.clearRect(0, 0, auroraWidth, auroraHeight);
             auroraBodyContext.clearRect(0, 0, auroraWidth, auroraHeight);
             auroraFilamentContext.clearRect(0, 0, auroraWidth, auroraHeight);
@@ -1901,6 +1902,36 @@
                 auroraBodyContext.moveTo(ray.x, ray.topY);
                 auroraBodyContext.lineTo(ray.x, ray.bottomY);
                 auroraBodyContext.stroke();
+              }
+
+              // Broken, drifting cross-streaks bind neighbouring rays without turning
+              // the body into a flat, foggy wash. Their uneven heights and slopes keep
+              // the connections embedded in the curtain's folds.
+              auroraFilamentContext.lineWidth = 0.8;
+              for (let index = 0; index + 6 < rayCount; index += 3) {
+                const bridgeSignal = Math.max(0, Math.sin(
+                  index * 0.83 + 1.7 * Math.sin(index * 0.19 + curtain.phase) + time * 0.21 * curtain.direction + curtain.phase * 4,
+                ));
+                if (bridgeSignal < 0.42) continue;
+                const start = auroraRays[index];
+                const end = auroraRays[index + 6];
+                const bridgeHeight = 0.34 + 0.34 * (0.5 + 0.5 * Math.sin(index * 0.37 + time * 0.17 * curtain.direction));
+                const startY = start.topY + (start.bottomY - start.topY) * bridgeHeight;
+                const endY = end.topY + (end.bottomY - end.topY) * (
+                  bridgeHeight + 0.13 * Math.sin(index * 0.61 - time * 0.14 * curtain.direction + curtain.phase)
+                );
+                auroraFilamentContext.strokeStyle = `rgba(0, 255, 76, ${
+                  start.edgeFade * end.edgeFade * bridgeSignal * 0.08 * auroraTuning.brightness
+                })`;
+                auroraFilamentContext.beginPath();
+                auroraFilamentContext.moveTo(start.x, startY);
+                auroraFilamentContext.quadraticCurveTo(
+                  (start.x + end.x) / 2,
+                  (startY + endY) / 2 + auroraHeight * 0.025 * Math.sin(index * 0.49 + time * 0.12 * curtain.direction),
+                  end.x,
+                  endY,
+                );
+                auroraFilamentContext.stroke();
               }
 
               // A separate, smaller blur leaves a few soft filaments within the sheet.
