@@ -1724,7 +1724,9 @@
             const siderealTime = localSiderealTime(new Date());
             const centerX = frame.width / 2;
             const centerY = frame.height / 2;
-            const horizonRadius = Math.min(frame.width, frame.height) / 2;
+            // Zoomed to fill the whole frame: the projection covers the
+            // corners, so the lowest sky near the horizon is cropped.
+            const horizonRadius = Math.hypot(frame.width, frame.height) / 2;
 
             for (const star of starCatalog) {
               let hourAngle = siderealTime - star.rightAscension;

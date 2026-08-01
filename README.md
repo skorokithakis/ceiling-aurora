@@ -16,7 +16,8 @@ Default location is Thessaloniki. Override with URL parameters:
 ```
 
 Orientation: north is at the top of the image, east on the left (the sky as
-seen looking up).
+seen looking up). The view is zoomed to fill the frame, so the lowest sky
+near the horizon is cropped.
 
 ## Regenerating star data
 
