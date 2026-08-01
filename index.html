@@ -1763,17 +1763,46 @@
         });
 
         // Draw this layer small and scale it up: the reduced resolution keeps the
-        // broad, translucent light inexpensive and naturally soft.
+        // many fine curtain rays inexpensive while retaining their soft glow.
+        // This visual regresses easily: symmetric curtains, evenly spaced equal-width
+        // filaments (an equaliser), hard vertical edges, neon saturation, a smooth dark
+        // lower border (a mountain ridge), or uniform brightness without bright cores look fake.
         const auroraCanvas = document.createElement("canvas");
         const auroraContext = auroraCanvas.getContext("2d");
-        const auroraScale = 4;
+        const auroraBodyCanvas = document.createElement("canvas");
+        const auroraBodyContext = auroraBodyCanvas.getContext("2d");
+        const auroraFilamentCanvas = document.createElement("canvas");
+        const auroraFilamentContext = auroraFilamentCanvas.getContext("2d");
+        // Keep the fixed look controls together so future tuning does not require
+        // tracing through the renderer.
+        const auroraTuning = {
+          brightness: 0.55,
+          filamentStrength: 1.4,
+          filamentDensity: 1.35,
+          filamentSampleStep: 0.0075,
+          bodySampleStride: 4,
+          scale: 6,
+          bodyLineWidth: 8,
+          filamentLineWidth: 1.5,
+          bodyBlur: 2.5,
+          filamentBlur: 0.7,
+        };
+        const curtains = [
+          { offset: 0.06, span: 0.46, baseStart: 0.80, baseEnd: 0.61, wobble: 0.018, waves: 11, phase: 0.63, direction: 1 },
+          { offset: 0.39, span: 0.39, baseStart: 0.57, baseEnd: 0.76, wobble: 0.013, waves: 8, phase: 4.18, direction: -1 },
+        ];
+        const auroraRays = [];
         layers.push({
           update(frame) {
-            const auroraWidth = Math.max(1, Math.ceil(frame.width / auroraScale));
-            const auroraHeight = Math.max(1, Math.ceil(frame.height / auroraScale));
+            const auroraWidth = Math.max(1, Math.ceil(frame.width / auroraTuning.scale));
+            const auroraHeight = Math.max(1, Math.ceil(frame.height / auroraTuning.scale));
             if (auroraCanvas.width !== auroraWidth || auroraCanvas.height !== auroraHeight) {
               auroraCanvas.width = auroraWidth;
               auroraCanvas.height = auroraHeight;
+              auroraBodyCanvas.width = auroraWidth;
+              auroraBodyCanvas.height = auroraHeight;
+              auroraFilamentCanvas.width = auroraWidth;
+              auroraFilamentCanvas.height = auroraHeight;
             }
           },
           draw(context, frame) {
@@ -1781,40 +1810,125 @@
             const auroraHeight = auroraCanvas.height;
             const time = frame.time;
             auroraContext.clearRect(0, 0, auroraWidth, auroraHeight);
-            auroraContext.filter = "blur(5px)";
-            auroraContext.lineCap = "round";
+            auroraBodyContext.clearRect(0, 0, auroraWidth, auroraHeight);
+            auroraFilamentContext.clearRect(0, 0, auroraWidth, auroraHeight);
+            auroraBodyContext.globalCompositeOperation = "lighter";
+            auroraFilamentContext.globalCompositeOperation = "lighter";
+            auroraBodyContext.lineCap = "round";
+            auroraFilamentContext.lineCap = "round";
 
-            for (let ribbon = 0; ribbon < 3; ribbon += 1) {
-              const phase = ribbon * 2.1;
-              // Real aurora palette: mostly green (~130) with a pink fringe (~320).
-              const baseHue = [128, 142, 320][ribbon];
-              const hue = baseHue + 12 * Math.sin(time / 25 + phase);
-              const centerY = auroraHeight * (0.22 + ribbon * 0.19);
-              const amplitude = auroraHeight * (0.07 + ribbon * 0.015);
-              const gradient = auroraContext.createLinearGradient(0, 0, auroraWidth, 0);
-              gradient.addColorStop(0, `hsla(${hue}, 80%, 58%, 0)`);
-              gradient.addColorStop(0.22, `hsla(${hue + 12}, 80%, 60%, 0.32)`);
-              gradient.addColorStop(0.55, `hsla(${hue - 14}, 75%, 62%, 0.42)`);
-              gradient.addColorStop(0.82, `hsla(${hue + 18}, 80%, 60%, 0.28)`);
-              gradient.addColorStop(1, `hsla(${hue}, 80%, 58%, 0)`);
-
-              auroraContext.strokeStyle = gradient;
-              auroraContext.lineWidth = auroraHeight * (0.13 + ribbon * 0.025);
-              auroraContext.beginPath();
-              for (let x = -auroraWidth * 0.1; x <= auroraWidth * 1.1; x += 3) {
-                const progress = x / auroraWidth;
-                const y =
-                  centerY +
-                  amplitude * Math.sin(progress * 5.2 + time / 18 + phase) +
-                  amplitude * 0.45 * Math.sin(progress * 11 + time / 31 - phase);
-                if (x < 0) auroraContext.moveTo(x, y);
-                else auroraContext.lineTo(x, y);
+            for (const curtain of curtains) {
+              // Sample uniformly in t, not x: where dx/dt is small, rays bunch and
+              // overlap into folds. Do not simplify this back to uniform-x sampling.
+              let rayCount = 0;
+              for (let t = 0; t <= 1; t += auroraTuning.filamentSampleStep) {
+                const edgeFade = Math.pow(Math.sin(Math.PI * t), 0.8);
+                const x = auroraWidth * (
+                  curtain.offset +
+                  curtain.span * t +
+                  curtain.wobble * Math.sin(t * Math.PI * curtain.waves + time * 0.13 * curtain.direction + curtain.phase) +
+                  curtain.wobble * 0.18 * Math.sin(t * Math.PI * (curtain.waves * 2 + 1) - time * 0.08 * curtain.direction + curtain.phase * 2)
+                );
+                const baseY = auroraHeight * (
+                  curtain.baseStart +
+                  (curtain.baseEnd - curtain.baseStart) * t +
+                  0.035 * Math.sin(t * Math.PI * 5 - time * 0.1 * curtain.direction + curtain.phase)
+                );
+                // This high-frequency signal is defined per ray, independently of
+                // the curve geometry. It makes filaments visible throughout the sash;
+                // geometric bunching then adds extra brightness at the folds.
+                const filamentSignal = Math.max(0, Math.min(1,
+                  0.42 +
+                  0.34 * Math.sin(t * 67 * auroraTuning.filamentDensity + 3.1 * Math.sin(t * 13 + curtain.phase) + 1.1 * Math.sin(t * 37 - curtain.phase) + time * 0.18 * curtain.direction + curtain.phase * 3) +
+                  0.18 * Math.sin(t * 139 * auroraTuning.filamentDensity - time * 0.12 * curtain.direction + curtain.phase * 7) +
+                  0.12 * Math.sin(t * 227 * auroraTuning.filamentDensity + time * 0.07 * curtain.direction + curtain.phase),
+                ));
+                // The steep curve leaves a lot of dim rays and just a few bright ones.
+                const filament = Math.pow(filamentSignal, 6);
+                // One narrow, independently moving peak per curtain restores the rare
+                // bright cores without lifting the many dim surrounding filaments.
+                const brightCore = Math.pow(Math.max(0,
+                  Math.sin(t * (12.7 + curtain.waves * 0.37) + curtain.phase * 1.9 + time * 0.09 * curtain.direction),
+                ), 18);
+                const widthSignal = 0.5 + 0.5 * Math.sin(t * 31 + 1.4 * Math.sin(t * 11 + curtain.phase) - time * 0.05 * curtain.direction);
+                const filamentWidth = auroraTuning.filamentLineWidth * (0.7 + 2.1 * Math.pow(widthSignal, 4));
+                // Fast height changes keep every ray's soft end independent; the sheet
+                // therefore dissolves upward instead of ending in one scalloped outline.
+                const feather =
+                  0.5 +
+                  0.28 * Math.sin(t * 47 - time * 0.11 + curtain.phase * 5) +
+                  0.22 * Math.sin(t * 103 + time * 0.16 + curtain.phase);
+                const heightSignal = Math.max(0, Math.sin(t * 57 + 1.2 * Math.sin(t * 17 + curtain.phase) - time * 0.09 * curtain.direction));
+                const rayHeight = auroraHeight * (
+                  0.17 +
+                  0.15 * (0.5 + 0.5 * Math.sin(t * 13 - time * 0.14 * curtain.direction + curtain.phase)) +
+                  0.17 * Math.max(0, feather) +
+                  0.35 * Math.pow(heightSignal, 5)
+                );
+                const topY = Math.max(0, baseY - rayHeight);
+                const bottomY = Math.min(auroraHeight, baseY + rayHeight * 0.22);
+                const ray = auroraRays[rayCount] || (auroraRays[rayCount] = {});
+                ray.x = x;
+                ray.topY = topY;
+                ray.bottomY = bottomY;
+                ray.edgeFade = edgeFade;
+                ray.filament = filament;
+                ray.brightCore = brightCore;
+                ray.filamentWidth = filamentWidth;
+                rayCount += 1;
               }
-              auroraContext.stroke();
+
+              // A broad, low-alpha pass forms the continuously visible curtain. Blur
+              // each ray so even tightly bunched folds remain soft on both sides.
+              auroraBodyContext.lineWidth = auroraTuning.bodyLineWidth;
+              for (let index = 0; index < rayCount; index += auroraTuning.bodySampleStride) {
+                const ray = auroraRays[index];
+                // These per-ray gradients allocate roughly 300 gradients and 1,800 colour
+                // strings per frame. Reviewed and retained: reuse or approximation changes
+                // each ray's tuned vertical profile; this is bounded young-gen GC churn, not
+                // growth or a leak. Revisit only if a real projector stutters.
+                const body = auroraBodyContext.createLinearGradient(ray.x, ray.topY, ray.x, ray.bottomY);
+                body.addColorStop(0, "rgba(255, 105, 170, 0)");
+                body.addColorStop(0.07, `rgba(255, 105, 170, ${ray.edgeFade * 0.003 * auroraTuning.brightness})`);
+                body.addColorStop(0.13, "rgba(255, 105, 170, 0)");
+                body.addColorStop(0.28, `rgba(0, 235, 72, ${ray.edgeFade * 0.072 * auroraTuning.brightness})`);
+                body.addColorStop(0.69, `rgba(0, 245, 68, ${ray.edgeFade * 0.11 * auroraTuning.brightness})`);
+                body.addColorStop(0.84, `rgba(0, 225, 58, ${ray.edgeFade * 0.082 * auroraTuning.brightness})`);
+                body.addColorStop(1, "rgba(0, 225, 58, 0)");
+                auroraBodyContext.globalAlpha = 1;
+                auroraBodyContext.strokeStyle = body;
+                auroraBodyContext.beginPath();
+                auroraBodyContext.moveTo(ray.x, ray.topY);
+                auroraBodyContext.lineTo(ray.x, ray.bottomY);
+                auroraBodyContext.stroke();
+              }
+
+              // A separate, smaller blur leaves a few soft filaments within the sheet.
+              for (let index = 0; index < rayCount; index += 1) {
+                const ray = auroraRays[index];
+                auroraFilamentContext.lineWidth = ray.filamentWidth;
+                const core = auroraFilamentContext.createLinearGradient(ray.x, ray.topY, ray.x, ray.bottomY);
+                core.addColorStop(0, "rgba(0, 255, 92, 0)");
+                core.addColorStop(0.52, `rgba(0, 255, 92, ${ray.edgeFade * (ray.filament * 0.032 + ray.brightCore * 0.048) * auroraTuning.brightness * auroraTuning.filamentStrength})`);
+                core.addColorStop(0.76, `rgba(0, 255, 76, ${ray.edgeFade * (ray.filament * 0.078 + ray.brightCore * 0.102) * auroraTuning.brightness * auroraTuning.filamentStrength})`);
+                core.addColorStop(1, "rgba(0, 255, 76, 0)");
+                auroraFilamentContext.globalAlpha = 1;
+                auroraFilamentContext.strokeStyle = core;
+                auroraFilamentContext.beginPath();
+                auroraFilamentContext.moveTo(ray.x, ray.topY);
+                auroraFilamentContext.lineTo(ray.x, ray.bottomY);
+                auroraFilamentContext.stroke();
+              }
             }
 
+            auroraContext.globalCompositeOperation = "lighter";
+            auroraContext.filter = `blur(${auroraTuning.bodyBlur}px)`;
+            auroraContext.drawImage(auroraBodyCanvas, 0, 0);
+            auroraContext.filter = `blur(${auroraTuning.filamentBlur}px)`;
+            auroraContext.drawImage(auroraFilamentCanvas, 0, 0);
+            auroraContext.globalAlpha = 1;
+            auroraContext.globalCompositeOperation = "source-over";
             auroraContext.filter = "none";
-            context.imageSmoothingEnabled = true;
             context.drawImage(auroraCanvas, 0, 0, frame.width, frame.height);
           },
         });
