@@ -5259,7 +5259,7 @@
         // Keep the fixed look controls together so future tuning does not require
         // tracing through the renderer.
         const auroraTuning = {
-          brightness: 0.55,
+          brightness: 0.63,
           filamentStrength: 1.4,
           filamentDensity: 1.35,
           filamentSampleStep: 0.0075,
@@ -5271,11 +5271,20 @@
           filamentBlur: 0.7,
           timeScale: 2,
         };
+        // Base lines: each swings only ~0.08-0.10 across its span so the pair
+        // does not arc up into a dome (a dome reads as a distant ridge), and
+        // the two are not mirror images of each other (left-right mirror
+        // symmetry between curtains is the top fake-tell in gnosis rztcvk).
+        // The baseY wobble below keeps the lines lively, not flat.
         const curtains = [
-          { offset: 0.02, span: 0.56, baseStart: 0.80, baseEnd: 0.61, wobble: 0.018, waves: 11, phase: 0.63, direction: 1 },
-          { offset: 0.40, span: 0.56, baseStart: 0.57, baseEnd: 0.76, wobble: 0.013, waves: 8, phase: 4.18, direction: -1 },
+          { offset: 0.02, span: 0.56, baseStart: 0.78, baseEnd: 0.68, wobble: 0.018, waves: 11, phase: 0.63, direction: 1 },
+          { offset: 0.40, span: 0.56, baseStart: 0.63, baseEnd: 0.71, wobble: 0.013, waves: 8, phase: 4.18, direction: -1 },
         ];
         const auroraRays = [];
+        // Unit-interval clamp for a y position inside a ray's span. Shared by all
+        // rays: a per-ray closure here would be allocated for every ray, every
+        // frame in the animation hot path.
+        const gradientStop = (y, topY, span) => Math.max(0, Math.min(1, (y - topY) / span));
         layers.push({
           update(frame) {
             const auroraWidth = Math.max(1, Math.ceil(frame.width / auroraTuning.scale));
@@ -5316,7 +5325,7 @@
                 const baseY = auroraHeight * (
                   curtain.baseStart +
                   (curtain.baseEnd - curtain.baseStart) * t +
-                  0.035 * Math.sin(t * Math.PI * 5 - time * 0.1 * curtain.direction + curtain.phase)
+                  0.045 * Math.sin(t * Math.PI * 5 - time * 0.1 * curtain.direction + curtain.phase)
                 );
                 // This high-frequency signal is defined per ray, independently of
                 // the curve geometry. It makes filaments visible throughout the sash;
@@ -5343,22 +5352,57 @@
                   0.28 * Math.sin(t * 47 - time * 0.11 + curtain.phase * 5) +
                   0.22 * Math.sin(t * 103 + time * 0.16 + curtain.phase);
                 const heightSignal = Math.max(0, Math.sin(t * 57 + 1.2 * Math.sin(t * 17 + curtain.phase) - time * 0.09 * curtain.direction));
+                // Squared (not 5th-power) height signal plus a raised floor: heights
+                // stay spread but no ray collapses into a stub, so the top edge stays
+                // ragged instead of isolated spikes with gaps between them.
                 const rayHeight = auroraHeight * (
-                  0.17 +
-                  0.15 * (0.5 + 0.5 * Math.sin(t * 13 - time * 0.14 * curtain.direction + curtain.phase)) +
-                  0.17 * Math.max(0, feather) +
-                  0.35 * Math.pow(heightSignal, 5)
+                  0.33 +
+                  0.16 * (0.5 + 0.5 * Math.sin(t * 13 - time * 0.14 * curtain.direction + curtain.phase)) +
+                  0.19 * Math.max(0, feather) +
+                  0.20 * Math.pow(heightSignal, 2)
                 );
                 const topY = Math.max(0, baseY - rayHeight);
                 const bottomY = Math.min(auroraHeight, baseY + rayHeight * 0.22);
                 const ray = auroraRays[rayCount] || (auroraRays[rayCount] = {});
                 ray.x = x;
+                ray.baseY = baseY;
                 ray.topY = topY;
                 ray.bottomY = bottomY;
                 ray.edgeFade = edgeFade;
                 ray.filament = filament;
                 ray.brightCore = brightCore;
                 ray.filamentWidth = filamentWidth;
+                // The foot of the green veil - where the veil above the band
+                // gives way to the bright band - is jittered per ray so this
+                // transition cannot line up into a smooth outline. The lower
+                // border must never be a constant offset from the smooth baseY
+                // curve either: a smooth dark lower border is on the rejected
+                // list (gnosis rztcvk: it reads as a mountain ridge). The
+                // jitter frequency is long enough to survive the body blur but
+                // short enough that neighbouring rays still step out of line.
+                ray.veilFoot = baseY - auroraHeight * 0.039 * (1 + 0.5 * Math.sin(t * 37 + 1.7 * Math.sin(t * 19 + curtain.phase) - time * 0.14 * curtain.direction + curtain.phase * 5));
+                // The lower border is the emission's sharp cutoff: a real
+                // aurora's emission stops abruptly near 100 km, so the peak
+                // alpha forms a plateau from just above baseY
+                // (baseY - auroraHeight * 0.006) down to this per-ray jittered
+                // line, then cuts to zero over the short ray.bandFade span
+                // below it - instead of dissolving in a long soft gradient that
+                // reads as a hillside. The border stays just below baseY and
+                // is jittered per ray so it never draws a clean continuous
+                // line.
+                ray.bandBottom = baseY + auroraHeight * (0.018 + 0.016 * Math.sin(t * 43 + 1.3 * Math.sin(t * 23 + curtain.phase) + time * 0.09 * curtain.direction + curtain.phase * 7));
+                // Below the border, alpha falls to zero over a short span:
+                // about a third of the distance from the veil foot to the
+                // baseY line (baseY - veilFoot). The span inherits the veil
+                // foot's per-ray jitter, so the cutoff stays ragged ray to ray.
+                ray.bandFade = (baseY - ray.veilFoot) / 3;
+                // The band's peak brightness varies along x in the range
+                // 0.78-1.02 (about +/-0.12 around the 0.9 baseline): a smooth
+                // low-frequency sine of amplitude 0.08 plus a smaller
+                // high-frequency contribution of amplitude 0.04 from the
+                // filament signal. A constant-brightness band draws the eye
+                // as a bar.
+                ray.bandGlow = 0.9 + 0.08 * Math.sin(t * 9 + time * 0.07 * curtain.direction + curtain.phase * 2) + 0.04 * (2 * filamentSignal - 1);
                 rayCount += 1;
               }
 
@@ -5371,14 +5415,38 @@
                 // strings per frame. Reviewed and retained: reuse or approximation changes
                 // each ray's tuned vertical profile; this is bounded young-gen GC churn, not
                 // growth or a leak. Revisit only if a real projector stutters.
+                // The bright stops are anchored to absolute frame height around baseY
+                // (a thin band), so every ray is brightest at the same altitude and the
+                // curtain's bright lower border is continuous. Above the band, the
+                // fade-out runs from the ray's own topY, so the curtain dissolves
+                // upward at ragged, per-ray heights. The veil foot and the lower
+                // border are jittered per ray (ray.veilFoot/ray.bandBottom) so neither
+                // edge forms a smooth outline, and the peak alpha varies along x
+                // (ray.bandGlow). The peak alpha spans a plateau from just above baseY
+                // (baseY - auroraHeight * 0.006) down to the lower border, which then
+                // falls to zero over the short ray.bandFade span below it: a hard
+                // bright lower edge, not a long soft dark gradient (a smooth dark
+                // lower border reads as a mountain ridge, gnosis rztcvk).
+                const bodySpan = Math.max(1, ray.bottomY - ray.topY);
+                const pinkSpan = ray.veilFoot - ray.topY;
+                const peak = 0.17 * ray.bandGlow;
                 const body = auroraBodyContext.createLinearGradient(ray.x, ray.topY, ray.x, ray.bottomY);
+                // Stops are in ascending y: a faint pink tip at the ray's own top,
+                // then the green veil filling this ray's own fade span down to the
+                // jittered veil foot (ray.veilFoot), then the bright band around
+                // baseY whose peak spans a plateau from just above baseY down to
+                // the jittered lower border (ray.bandBottom) and cuts off over the
+                // short ray.bandFade span below it.
                 body.addColorStop(0, "rgba(255, 105, 170, 0)");
-                body.addColorStop(0.07, `rgba(255, 105, 170, ${ray.edgeFade * 0.003 * auroraTuning.brightness})`);
-                body.addColorStop(0.13, "rgba(255, 105, 170, 0)");
-                body.addColorStop(0.28, `rgba(0, 235, 72, ${ray.edgeFade * 0.072 * auroraTuning.brightness})`);
-                body.addColorStop(0.69, `rgba(0, 245, 68, ${ray.edgeFade * 0.11 * auroraTuning.brightness})`);
-                body.addColorStop(0.84, `rgba(0, 225, 58, ${ray.edgeFade * 0.082 * auroraTuning.brightness})`);
-                body.addColorStop(1, "rgba(0, 225, 58, 0)");
+                body.addColorStop(gradientStop(ray.topY + pinkSpan * 0.05, ray.topY, bodySpan), `rgba(255, 105, 170, ${ray.edgeFade * 0.06 * auroraTuning.brightness})`);
+                body.addColorStop(gradientStop(ray.topY + pinkSpan * 0.22, ray.topY, bodySpan), "rgba(255, 105, 170, 0)");
+                body.addColorStop(gradientStop(ray.topY + pinkSpan * 0.32, ray.topY, bodySpan), `rgba(0, 235, 72, ${ray.edgeFade * 0.04 * auroraTuning.brightness})`);
+                body.addColorStop(gradientStop(ray.topY + pinkSpan * 0.56, ray.topY, bodySpan), `rgba(0, 240, 70, ${ray.edgeFade * 0.065 * auroraTuning.brightness})`);
+                body.addColorStop(gradientStop(ray.topY + pinkSpan * 0.8, ray.topY, bodySpan), `rgba(0, 245, 68, ${ray.edgeFade * 0.095 * auroraTuning.brightness})`);
+                body.addColorStop(gradientStop(ray.veilFoot, ray.topY, bodySpan), `rgba(0, 235, 72, ${ray.edgeFade * 0.08 * auroraTuning.brightness})`);
+                body.addColorStop(gradientStop(ray.baseY - auroraHeight * 0.006, ray.topY, bodySpan), `rgba(0, 245, 68, ${ray.edgeFade * peak * auroraTuning.brightness})`);
+                body.addColorStop(gradientStop(ray.bandBottom, ray.topY, bodySpan), `rgba(0, 245, 68, ${ray.edgeFade * peak * auroraTuning.brightness})`);
+                body.addColorStop(gradientStop(ray.bandBottom + ray.bandFade, ray.topY, bodySpan), "rgba(0, 225, 58, 0)");
                 auroraBodyContext.globalAlpha = 1;
                 auroraBodyContext.strokeStyle = body;
                 auroraBodyContext.beginPath();
