@@ -19,6 +19,11 @@ Orientation: north is at the top of the image, east on the left (the sky as
 seen looking up). The view is zoomed to fill the frame, so the lowest sky
 near the horizon is cropped.
 
+## Local QA
+
+`.symphony/serve` serves the repo root at <http://localhost:8000/>. The page is
+self-contained, so opening `index.html` directly also works.
+
 ## Regenerating star data
 
 `tools/make-stars.py` downloads the HYG catalog and emits `tools/stars.js`
