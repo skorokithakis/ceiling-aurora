@@ -9,6 +9,10 @@ background, single static HTML file, no dependencies.
 Open <https://skorokithakis.github.io/ceiling-aurora/> (or `index.html`
 locally), press F11, point the projector at the ceiling.
 
+On a phone or tablet, tap the screen: a dim fullscreen button appears in the
+bottom-right corner and fades away again after a few seconds. Tap it to go
+fullscreen; the screen then stays awake.
+
 Default location is Thessaloniki. Override with URL parameters:
 
 ```

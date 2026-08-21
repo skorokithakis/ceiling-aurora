@@ -28,6 +28,35 @@
         display: block;
         background: #000;
       }
+
+      #fullscreen-toggle {
+        position: fixed;
+        right: 16px;
+        bottom: 16px;
+        width: 44px;
+        height: 44px;
+        display: flex;
+        align-items: center;
+        justify-content: center;
+        padding: 0;
+        background: transparent;
+        border: none;
+        border-radius: 50%;
+        opacity: 0;
+        pointer-events: none;
+        transition: opacity 0.4s ease;
+        -webkit-tap-highlight-color: transparent;
+      }
+
+      #fullscreen-toggle.visible {
+        opacity: 1;
+        pointer-events: auto;
+      }
+
+      #fullscreen-toggle svg {
+        display: block;
+        opacity: 0.3;
+      }
     </style>
   </head>
   <body>
@@ -5624,6 +5653,116 @@
           document.body.classList.remove("cursor-hidden");
           clearTimeout(cursorTimer);
           cursorTimer = setTimeout(() => document.body.classList.add("cursor-hidden"), 2000);
+        }
+
+        // Dim, auto-hiding fullscreen toggle button plus a screen wake lock.
+        let fullscreenButton = null;
+        let hideButtonTimer;
+        let screenWakeLock = null;
+        let wakeLockPending = false;
+        // A tap that starts while the button is hidden still retargets its
+        // synthetic click to the button once the reveal makes it hit-testable,
+        // so only honor clicks whose press started on the button. Keyboard
+        // activations (click detail 0) always work.
+        let pressStartedOnButton = false;
+
+        function toggleFullscreen() {
+          const operation = document.fullscreenElement
+            ? document.exitFullscreen()
+            : document.documentElement.requestFullscreen();
+          if (operation && typeof operation.catch === "function") {
+            operation.catch(() => {});
+          }
+        }
+
+        function releaseWakeLock() {
+          if (screenWakeLock) {
+            const release = screenWakeLock.release();
+            if (release && typeof release.catch === "function") {
+              release.catch(() => {});
+            }
+            screenWakeLock = null;
+          }
+        }
+
+        function acquireWakeLock() {
+          if (!navigator.wakeLock || screenWakeLock || wakeLockPending) {
+            return;
+          }
+          wakeLockPending = true;
+          navigator.wakeLock.request("screen").then((lock) => {
+            wakeLockPending = false;
+            if (!document.fullscreenElement || document.hidden) {
+              const release = lock.release();
+              if (release && typeof release.catch === "function") {
+                release.catch(() => {});
+              }
+              return;
+            }
+            screenWakeLock = lock;
+            lock.addEventListener("release", () => {
+              if (screenWakeLock === lock) {
+                screenWakeLock = null;
+              }
+            });
+          }).catch(() => {
+            wakeLockPending = false;
+          });
+        }
+
+        // Browser-chrome fullscreen (F11) is invisible to the Fullscreen API:
+        // it leaves fullscreenElement null and fires no event, so it gets no
+        // wake lock. Only the button (or any requestFullscreen call) does.
+        function handleFullscreenChange() {
+          const isFullscreen = Boolean(document.fullscreenElement);
+          showFullscreenButton();
+          fullscreenButton.setAttribute("aria-label", isFullscreen ? "Exit fullscreen" : "Enter fullscreen");
+          if (isFullscreen) {
+            acquireWakeLock();
+          } else {
+            releaseWakeLock();
+          }
+        }
+
+        function handleVisibilityChange() {
+          if (!document.hidden && document.fullscreenElement) {
+            acquireWakeLock();
+          }
+        }
+
+        function showFullscreenButton() {
+          fullscreenButton.classList.add("visible");
+          clearTimeout(hideButtonTimer);
+          hideButtonTimer = setTimeout(() => fullscreenButton.classList.remove("visible"), 10000);
+        }
+
+        if (document.fullscreenEnabled) {
+          fullscreenButton = document.createElement("button");
+          fullscreenButton.id = "fullscreen-toggle";
+          fullscreenButton.type = "button";
+          fullscreenButton.setAttribute("aria-label", "Enter fullscreen");
+          fullscreenButton.innerHTML = '<svg viewBox="0 0 24 24" width="24" height="24" aria-hidden="true"><path d="M3 3h5v2h-2v3h-3zM16 3h5v5h-2v-3h-3zM3 21h5v-2h-2v-3h-3zM21 21v-5h-2v3h-3v2z" fill="#fff"/></svg>';
+          fullscreenButton.addEventListener("click", handleFullscreenButtonClick);
+          document.body.appendChild(fullscreenButton);
+
+          fullscreenButton.addEventListener("pointerdown", () => {
+            pressStartedOnButton = true;
+          });
+          window.addEventListener("pointerdown", () => {
+            pressStartedOnButton = false;
+          }, true);
+
+          window.addEventListener("mousemove", showFullscreenButton);
+          window.addEventListener("pointerdown", showFullscreenButton);
+          document.addEventListener("fullscreenchange", handleFullscreenChange);
+          document.addEventListener("visibilitychange", handleVisibilityChange);
+        }
+
+        function handleFullscreenButtonClick(event) {
+          if (event.detail > 0 && !pressStartedOnButton) {
+            return;
+          }
+          toggleFullscreen();
         }
 
         window.addEventListener("resize", resizeCanvas);
